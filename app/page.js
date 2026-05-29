@@ -5,7 +5,7 @@ import { useState } from "react";
 export default function Home() {
   const [question, setQuestion] = useState("Tell me about yourself");
   const [answer, setAnswer] = useState("");
-  const [result, setResult] = useState("");
+  const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
 
   async function evaluateAnswer() {
@@ -21,7 +21,7 @@ export default function Home() {
     });
 
     const data = await res.json();
-    setResult(data.result || data.error);
+ setResult(data.evaluation || { error: data.error });
     setLoading(false);
   }
 
@@ -56,12 +56,44 @@ export default function Home() {
           {loading ? "Evaluating..." : "Evaluate Answer"}
         </button>
 
-        {result && (
-          <div className="bg-slate-900 border border-slate-700 p-5 rounded">
-            <h2 className="text-xl font-bold mb-3">AI Result</h2>
-            <pre className="whitespace-pre-wrap">{result}</pre>
-          </div>
-        )}
+      {result && (
+  <div className="bg-slate-900 border border-slate-700 p-5 rounded space-y-4">
+    {result.error ? (
+      <p className="text-red-400">{result.error}</p>
+    ) : (
+      <>
+        <h2 className="text-xl font-bold">AI Result</h2>
+
+        <div className="text-3xl font-bold text-purple-400">
+          Score: {result.score}/10
+        </div>
+
+        <div>
+          <h3 className="font-semibold text-green-400">Strengths</h3>
+          <ul className="list-disc ml-6">
+            {result.strengths.map((item, index) => (
+              <li key={index}>{item}</li>
+            ))}
+          </ul>
+        </div>
+
+        <div>
+          <h3 className="font-semibold text-red-400">Weaknesses</h3>
+          <ul className="list-disc ml-6">
+            {result.weaknesses.map((item, index) => (
+              <li key={index}>{item}</li>
+            ))}
+          </ul>
+        </div>
+
+        <div>
+          <h3 className="font-semibold text-blue-400">Feedback</h3>
+          <p>{result.feedback}</p>
+        </div>
+      </>
+    )}
+  </div>
+)}
       </div>
     </main>
   );
