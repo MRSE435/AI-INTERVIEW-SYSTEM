@@ -2,49 +2,34 @@
 
 import { useRef, useState } from "react";
 
-export default function InterviewRoom({ session, updateSession }){
+const questions = [
+  "Tell me about yourself.",
+  "Describe one full-stack project you have built.",
+  "What technologies have you used in your projects?",
+  "What challenges did you face while building your projects?",
+  "Why should we select you for this internship?",
+];
+
+export default function InterviewRoom({ session, updateSession }) {
   const liveVideoRef = useRef(null);
   const recorderRef = useRef(null);
   const chunksRef = useRef([]);
 
-  const [question, setQuestion] = useState("Tell me about yourself");
-  const [answer, setAnswer] = useState("");
-  const [result, setResult] = useState(null);
-  const [loading, setLoading] = useState(false);
+  const [currentIndex, setCurrentIndex] = useState(
+    session?.currentQuestionIndex || 0
+  );
 
   const [stream, setStream] = useState(null);
   const [recording, setRecording] = useState(false);
   const [videoUrl, setVideoUrl] = useState("");
+  const [cameraBlob, setCameraBlob] = useState(null);
   const [status, setStatus] = useState("Camera not started");
+
+  const currentQuestion = questions[currentIndex];
 
   async function startCamera() {
     try {
-      setStatus("Start Camera button clicked...");
-
-      if (typeof window === "undefined") {
-        setStatus("Window not available");
-        return;
-      }
-
-      if (!window.isSecureContext) {
-        setStatus("Camera blocked: page is not secure HTTPS");
-        alert("Camera needs HTTPS. Open the HTTPS ngrok link, not HTTP.");
-        return;
-      }
-
-      if (!navigator.mediaDevices) {
-        setStatus("navigator.mediaDevices not available");
-        alert("Camera API not available in this browser/page.");
-        return;
-      }
-
-      if (!navigator.mediaDevices.getUserMedia) {
-        setStatus("getUserMedia not available");
-        alert("getUserMedia not supported here.");
-        return;
-      }
-
-      setStatus("Requesting camera/mic permission...");
+      setStatus("Requesting camera/microphone...");
 
       const mediaStream = await navigator.mediaDevices.getUserMedia({
         video: {
@@ -55,41 +40,70 @@ export default function InterviewRoom({ session, updateSession }){
         audio: true,
       });
 
-      const audioTracks = mediaStream.getAudioTracks();
-      const videoTracks = mediaStream.getVideoTracks();
-
-      console.log("Audio tracks:", audioTracks);
-      console.log("Video tracks:", videoTracks);
-
-      if (audioTracks.length === 0) {
-        setStatus("Camera started but microphone not found");
-      }
-
-      if (videoTracks.length === 0) {
-        setStatus("Microphone started but camera not found");
-        alert("No camera track found.");
-        return;
-      }
-
       setStream(mediaStream);
 
       if (liveVideoRef.current) {
         liveVideoRef.current.srcObject = mediaStream;
-
-        await liveVideoRef.current.play().catch((err) => {
-          console.log("Video play error:", err);
-        });
+        await liveVideoRef.current.play();
       }
 
       setStatus("Camera and microphone ready");
     } catch (error) {
-      console.log("Camera error:", error);
-
-      setStatus(`Camera error: ${error.name}`);
-
-      alert(`Camera error: ${error.name}\n${error.message}`);
+      setStatus("Camera error");
+      alert(error.message);
     }
   }
+
+function speakQuestion() {
+  if (!currentQuestion) return;
+
+  if (!window.speechSynthesis) {
+    alert("Text-to-speech is not supported in this browser.");
+    return;
+  }
+
+  window.speechSynthesis.cancel();
+
+  const utterance = new SpeechSynthesisUtterance(currentQuestion);
+
+  utterance.lang = "en-US";
+  utterance.rate = 0.9;
+  utterance.pitch = 1;
+  utterance.volume = 1;
+
+  utterance.onstart = () => {
+    setStatus("AI interviewer is speaking...");
+  };
+
+  utterance.onend = () => {
+    setStatus("Question spoken. Start your answer.");
+  };
+
+  utterance.onerror = (error) => {
+    console.log("Speech error:", error);
+    setStatus("Speech failed. Please read the question manually.");
+  };
+
+  const voices = window.speechSynthesis.getVoices();
+
+  if (voices.length > 0) {
+    const englishVoice =
+      voices.find((voice) => voice.lang.includes("en")) || voices[0];
+
+    utterance.voice = englishVoice;
+    window.speechSynthesis.speak(utterance);
+  } else {
+    window.speechSynthesis.onvoiceschanged = () => {
+      const loadedVoices = window.speechSynthesis.getVoices();
+      const englishVoice =
+        loadedVoices.find((voice) => voice.lang.includes("en")) ||
+        loadedVoices[0];
+
+      utterance.voice = englishVoice;
+      window.speechSynthesis.speak(utterance);
+    };
+  }
+}
 
   function startRecording() {
     if (!stream) {
@@ -97,13 +111,9 @@ export default function InterviewRoom({ session, updateSession }){
       return;
     }
 
-    if (!window.MediaRecorder) {
-      alert("MediaRecorder is not supported in this browser.");
-      return;
-    }
-
     chunksRef.current = [];
     setVideoUrl("");
+    setCameraBlob(null);
 
     let options = {};
 
@@ -111,8 +121,6 @@ export default function InterviewRoom({ session, updateSession }){
       options = { mimeType: "video/webm;codecs=vp8,opus" };
     } else if (MediaRecorder.isTypeSupported("video/webm")) {
       options = { mimeType: "video/webm" };
-    } else if (MediaRecorder.isTypeSupported("video/mp4")) {
-      options = { mimeType: "video/mp4" };
     }
 
     const recorder = new MediaRecorder(stream, options);
@@ -125,7 +133,7 @@ export default function InterviewRoom({ session, updateSession }){
 
     recorder.onstart = () => {
       setRecording(true);
-      setStatus("Recording...");
+      setStatus("Recording answer...");
     };
 
     recorder.onstop = () => {
@@ -133,25 +141,18 @@ export default function InterviewRoom({ session, updateSession }){
         type: recorder.mimeType || "video/webm",
       });
 
-      console.log("Blob size:", blob.size);
-      console.log("Blob type:", blob.type);
-
       if (blob.size === 0) {
-        setStatus("Recording failed: empty video");
-        alert("Recording failed. Empty video created.");
+        alert("Recording failed. Empty video.");
+        setStatus("Recording failed");
         return;
       }
 
       const url = URL.createObjectURL(blob);
+
+      setCameraBlob(blob);
       setVideoUrl(url);
       setRecording(false);
-      setStatus("Recording completed");
-    };
-
-    recorder.onerror = (event) => {
-      console.log("Recorder error:", event);
-      setRecording(false);
-      setStatus("Recorder error");
+      setStatus("Answer recorded. Save and continue.");
     };
 
     recorderRef.current = recorder;
@@ -166,142 +167,140 @@ export default function InterviewRoom({ session, updateSession }){
     }
   }
 
-  async function evaluateAnswer() {
-    setLoading(true);
-    setResult(null);
+  function saveAnswerAndNext() {
+    if (!cameraBlob) {
+      alert("Record answer first");
+      return;
+    }
 
-    const res = await fetch("/api/evaluate", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ question, answer }),
+    const newResponse = {
+      questionIndex: currentIndex,
+      question: currentQuestion,
+      videoPreviewUrl: videoUrl,
+      evaluationStatus: "pending",
+      transcript: "",
+      recordedAt: new Date().toISOString(),
+    };
+
+    const previousAnswers = session?.answers || [];
+    const updatedAnswers = [...previousAnswers, newResponse];
+
+    const nextIndex = currentIndex + 1;
+
+    updateSession({
+      answers: updatedAnswers,
+      currentQuestionIndex: nextIndex,
+      status: nextIndex >= questions.length ? "completed" : "in_progress",
     });
 
-    const data = await res.json();
-    setResult(data.evaluation || { error: data.error });
-    setLoading(false);
+    setCurrentIndex(nextIndex);
+    setVideoUrl("");
+    setCameraBlob(null);
+    setStatus("Ready for next question");
+  }
+
+  if (currentIndex >= questions.length) {
+    return (
+      <main className="min-h-screen bg-slate-950 text-white p-6">
+        <div className="max-w-4xl mx-auto bg-slate-900 border border-slate-700 rounded-2xl p-6 space-y-4">
+          <h1 className="text-3xl font-bold">Interview Completed</h1>
+          <p className="text-slate-300">
+            Your responses have been recorded. The recruiter can review your
+            videos and evaluation later.
+          </p>
+
+          <p className="text-slate-400">
+            Session ID: {session?.sessionId}
+          </p>
+        </div>
+      </main>
+    );
   }
 
   return (
     <main className="min-h-screen bg-slate-950 text-white p-4 md:p-8">
-      <div className="max-w-4xl mx-auto space-y-6">
-        <h1 className="text-3xl font-bold">AI Video Interview</h1>
+      <div className="max-w-5xl mx-auto space-y-6">
+        <h1 className="text-3xl font-bold">AI Interview Room</h1>
 
-        <div className="bg-slate-900 border border-slate-700 p-5 rounded space-y-4">
-          <h2 className="text-xl font-bold">Video Recording</h2>
+        <div className="grid md:grid-cols-2 gap-6">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 space-y-4">
+            <h2 className="text-xl font-bold">AI Interviewer</h2>
 
-          <p className="text-sm text-yellow-300">Status: {status}</p>
+            <div className="h-40 rounded-2xl bg-gradient-to-br from-purple-700 to-slate-900 flex items-center justify-center text-6xl">
+              🤖
+            </div>
 
-          <video
-            ref={liveVideoRef}
-            autoPlay
-            muted
-            playsInline
-            webkit-playsinline="true"
-            className="w-full rounded bg-black min-h-[260px]"
-          />
+            <p className="text-sm text-slate-400">
+              Question {currentIndex + 1} of {questions.length}
+            </p>
 
-          <div className="flex gap-3 flex-wrap">
-            <button
-              onClick={startCamera}
-              className="bg-blue-600 px-4 py-2 rounded"
-            >
-              Start Camera
-            </button>
+            <h3 className="text-2xl font-semibold">{currentQuestion}</h3>
 
             <button
-              onClick={startRecording}
-              className="bg-green-600 px-4 py-2 rounded disabled:opacity-50"
-              disabled={recording}
+              onClick={speakQuestion}
+              className="bg-purple-600 px-4 py-2 rounded"
             >
-              Start Recording
-            </button>
-
-            <button
-              onClick={stopRecording}
-              className="bg-red-600 px-4 py-2 rounded disabled:opacity-50"
-              disabled={!recording}
-            >
-              Stop Recording
+              Speak Question
             </button>
           </div>
 
-          {videoUrl && (
-            <div>
-              <h3 className="font-semibold mb-2">Recorded Preview</h3>
-              <video
-                src={videoUrl}
-                controls
-                playsInline
-                className="w-full rounded bg-black"
-              />
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 space-y-4">
+            <h2 className="text-xl font-bold">Your Camera</h2>
+
+            <p className="text-yellow-300 text-sm">Status: {status}</p>
+
+            <video
+              ref={liveVideoRef}
+              autoPlay
+              muted
+              playsInline
+              className="w-full rounded bg-black min-h-[260px]"
+            />
+
+            <div className="flex gap-3 flex-wrap">
+              <button
+                onClick={startCamera}
+                className="bg-blue-600 px-4 py-2 rounded"
+              >
+                Start Camera
+              </button>
+
+              <button
+                onClick={startRecording}
+                disabled={recording}
+                className="bg-green-600 px-4 py-2 rounded disabled:opacity-50"
+              >
+                Start Answer
+              </button>
+
+              <button
+                onClick={stopRecording}
+                disabled={!recording}
+                className="bg-red-600 px-4 py-2 rounded disabled:opacity-50"
+              >
+                Stop Answer
+              </button>
             </div>
-          )}
+          </div>
         </div>
 
-        <div>
-          <label className="block mb-2">Interview Question</label>
-          <textarea
-            className="w-full p-3 rounded bg-slate-900 border border-slate-700"
-            value={question}
-            onChange={(e) => setQuestion(e.target.value)}
-          />
-        </div>
+        {videoUrl && (
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 space-y-4">
+            <h2 className="text-xl font-bold">Recorded Answer Preview</h2>
 
-        <div>
-          <label className="block mb-2">Candidate Answer</label>
-          <textarea
-            className="w-full h-40 p-3 rounded bg-slate-900 border border-slate-700"
-            placeholder="Type candidate answer..."
-            value={answer}
-            onChange={(e) => setAnswer(e.target.value)}
-          />
-        </div>
+            <video
+              src={videoUrl}
+              controls
+              playsInline
+              className="w-full rounded bg-black"
+            />
 
-        <button
-          onClick={evaluateAnswer}
-          className="bg-purple-600 px-5 py-3 rounded font-semibold"
-        >
-          {loading ? "Evaluating..." : "Evaluate Answer"}
-        </button>
-
-        {result && (
-          <div className="bg-slate-900 border border-slate-700 p-5 rounded space-y-4">
-            {result.error ? (
-              <p className="text-red-400">{result.error}</p>
-            ) : (
-              <>
-                <h2 className="text-xl font-bold">AI Result</h2>
-
-                <div className="text-3xl font-bold text-purple-400">
-                  Score: {result.score}/10
-                </div>
-
-                <div>
-                  <h3 className="font-semibold text-green-400">Strengths</h3>
-                  <ul className="list-disc ml-6">
-                    {result.strengths.map((item, index) => (
-                      <li key={index}>{item}</li>
-                    ))}
-                  </ul>
-                </div>
-
-                <div>
-                  <h3 className="font-semibold text-red-400">Weaknesses</h3>
-                  <ul className="list-disc ml-6">
-                    {result.weaknesses.map((item, index) => (
-                      <li key={index}>{item}</li>
-                    ))}
-                  </ul>
-                </div>
-
-                <div>
-                  <h3 className="font-semibold text-blue-400">Feedback</h3>
-                  <p>{result.feedback}</p>
-                </div>
-              </>
-            )}
+            <button
+              onClick={saveAnswerAndNext}
+              className="bg-orange-600 px-5 py-3 rounded font-semibold"
+            >
+              Save Answer & Next Question
+            </button>
           </div>
         )}
       </div>
