@@ -95,6 +95,60 @@ app.post("/upload-camera", upload.single("video"), async (req, res) => {
   }
 });
 
+
+app.post("/upload-screen", upload.single("screen"), async (req, res) => {
+  let tempFilePath;
+
+  try {
+    const file = req.file;
+    const { interviewToken, sessionId } = req.body;
+
+    if (!file) {
+      return res.status(400).json({
+        success: false,
+        message: "No screen recording received",
+      });
+    }
+
+    tempFilePath = file.path;
+
+    const key = `interviews/${interviewToken}/screen/full-screen.webm`;
+
+    await r2.send(
+      new PutObjectCommand({
+        Bucket: process.env.R2_BUCKET_NAME,
+        Key: key,
+        Body: fs.createReadStream(tempFilePath),
+        ContentType: file.mimetype,
+      })
+    );
+
+    fs.unlinkSync(tempFilePath);
+
+    const screenVideoUrl = `${process.env.R2_PUBLIC_URL}/${key}`;
+
+    res.json({
+      success: true,
+      message: "Screen recording uploaded successfully",
+      screenVideoUrl,
+      key,
+      sessionId,
+    });
+  } catch (error) {
+    console.log("Screen upload error:", error);
+
+    if (tempFilePath && fs.existsSync(tempFilePath)) {
+      fs.unlinkSync(tempFilePath);
+    }
+
+    res.status(500).json({
+      success: false,
+      message: "Screen upload failed",
+    });
+  }
+});
+
+
 app.listen(process.env.PORT || 5000, () => {
   console.log(`Server running on port ${process.env.PORT || 5000}`);
 });

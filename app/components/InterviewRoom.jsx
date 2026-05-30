@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useRef, useState, useEffect } from "react";
 
 const questions = [
   "Tell me about yourself.",
@@ -14,6 +14,9 @@ export default function InterviewRoom({ session, updateSession }) {
   const liveVideoRef = useRef(null);
   const recorderRef = useRef(null);
   const chunksRef = useRef([]);
+  const screenRecorderRef = useRef(null);
+  const screenChunksRef = useRef([]);
+  const screenStreamRef = useRef(null);
 
   const [currentIndex, setCurrentIndex] = useState(
     session?.currentQuestionIndex || 0
@@ -25,6 +28,12 @@ export default function InterviewRoom({ session, updateSession }) {
   const [cameraBlob, setCameraBlob] = useState(null);
   const [status, setStatus] = useState("Camera not started");
   const [uploading, setUploading] = useState(false);
+  const [screenRecording, setScreenRecording] = useState(false);
+  const [screenBlob, setScreenBlob] = useState(null);
+  const [screenUrl, setScreenUrl] = useState("");
+  useEffect(() => {
+    startScreenRecording();
+  }, []);
 
   const currentQuestion = questions[currentIndex];
 
@@ -215,6 +224,12 @@ export default function InterviewRoom({ session, updateSession }) {
       const updatedAnswers = [...(session?.answers || []), newResponse];
 
       const nextIndex = currentIndex + 1;
+      const interviewCompleted = nextIndex >= questions.length;
+
+
+      if (interviewCompleted) {
+        stopScreenRecording();
+      }
 
       updateSession({
         answers: updatedAnswers,
@@ -235,6 +250,152 @@ export default function InterviewRoom({ session, updateSession }) {
     }
   }
 
+
+
+  async function uploadScreenRecording(blob) {
+    try {
+      setStatus("Uploading screen recording...");
+
+      const formData = new FormData();
+
+      formData.append("screen", blob, "full-screen.webm");
+      formData.append("interviewToken", session.interviewToken);
+      formData.append("sessionId", session.sessionId);
+
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_BACKEND_URL}/upload-screen`,
+        {
+          method: "POST",
+          body: formData,
+        }
+      );
+
+      const data = await res.json();
+
+      if (!data.success) {
+        setStatus("Screen upload failed");
+        alert(data.message || "Screen upload failed");
+        return;
+      }
+
+      updateSession({
+        screenRecordingUrl: data.screenVideoUrl,
+        screenUploadStatus: "uploaded",
+      });
+
+      setStatus("Screen recording uploaded successfully");
+    } catch (error) {
+      console.log(error);
+      setStatus("Screen upload error");
+      alert("Something went wrong while uploading screen recording.");
+    }
+  }
+
+
+
+  async function startScreenRecording() {
+    try {
+      const screenStream = await navigator.mediaDevices.getDisplayMedia({
+        video: true,
+        audio: false,
+      });
+
+      screenStreamRef.current = screenStream;
+      screenChunksRef.current = [];
+
+      let options = {};
+
+      if (MediaRecorder.isTypeSupported("video/webm;codecs=vp8")) {
+        options = { mimeType: "video/webm;codecs=vp8" };
+      } else if (MediaRecorder.isTypeSupported("video/webm")) {
+        options = { mimeType: "video/webm" };
+      }
+
+      const screenRecorder = new MediaRecorder(screenStream, options);
+
+      screenRecorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          screenChunksRef.current.push(event.data);
+        }
+      };
+
+      screenRecorder.onstart = () => {
+        setScreenRecording(true);
+        setStatus("Screen recording started");
+      };
+
+      screenRecorder.onstop = () => {
+        const blob = new Blob(screenChunksRef.current, {
+          type: screenRecorder.mimeType || "video/webm",
+
+        });
+
+        if (blob.size === 0) {
+          alert("Screen recording failed. Empty file.");
+          return;
+        }
+
+        const url = URL.createObjectURL(blob);
+        setScreenBlob(blob);
+        setScreenUrl(url);
+        setScreenRecording(false);
+        setStatus("Screen recording completed");
+
+        uploadScreenRecording(blob);
+      };
+
+      screenStream.getVideoTracks()[0].onended = () => {
+        setScreenRecording(false);
+
+        updateSession({
+          suspiciousEvents: [
+            ...(session?.suspiciousEvents || []),
+            {
+              type: "screen_share_stopped",
+              timestamp: new Date().toISOString(),
+            },
+          ],
+        });
+      };
+
+      screenRecorderRef.current = screenRecorder;
+      screenRecorder.start(1000);
+    } catch (error) {
+      alert("Screen sharing is required for desktop interview.");
+      console.log(error);
+    }
+  }
+
+
+  function stopScreenRecording() {
+    if (
+      screenRecorderRef.current &&
+      screenRecorderRef.current.state !== "inactive"
+    ) {
+      screenRecorderRef.current.stop();
+    }
+
+    if (screenStreamRef.current) {
+      screenStreamRef.current.getTracks().forEach((track) => track.stop());
+    }
+  }
+
+  if (currentIndex >= questions.length) {
+    return (
+      <main className="min-h-screen bg-slate-950 text-white p-6">
+        <div className="max-w-4xl mx-auto bg-slate-900 border border-slate-700 rounded-2xl p-6 space-y-4">
+          <h1 className="text-3xl font-bold">Interview Completed</h1>
+          <p className="text-slate-300">
+            Your interview has been submitted successfully.
+          </p>
+          <p className="text-slate-400">Session ID: {session?.sessionId}</p>
+          <p className="text-slate-400">
+            Screen Upload: {session?.screenUploadStatus || "processing"}
+          </p>
+        </div>
+      </main>
+    );
+  }
   return (
     <main className="min-h-screen bg-slate-950 text-white p-4 md:p-8">
       <div className="max-w-5xl mx-auto space-y-6">
