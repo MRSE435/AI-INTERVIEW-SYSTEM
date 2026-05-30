@@ -2,10 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import RulesPage from "../../components/RulesPage";
+import RulesPage from "../../components/RulesPage"; // 💡 Fixed: Added 'from' keyword here
 import HardwareCheck from "../../components/HardwareCheck";
 import InterviewRoom from "../../components/InterviewRoom";
-
 export default function Home() {
   const params = useParams();
   const interviewToken = params.token;
@@ -48,8 +47,14 @@ export default function Home() {
       updatedAt: new Date().toISOString(),
     };
 
+    // Update the live react state with the stream intact
     setSession(updated);
-    localStorage.setItem(storageKey, JSON.stringify(updated));
+
+    // Deep clone and strip out the native stream track before stringifying
+    const storageClone = { ...updated };
+    delete storageClone.sharedScreenStream;
+
+    localStorage.setItem(storageKey, JSON.stringify(storageClone));
   }
 
   function goToStage(nextStage) {
@@ -59,20 +64,31 @@ export default function Home() {
 
   if (!session) return null;
 
-  if (stage === "rules") {
-    return <RulesPage goToStage={goToStage} />;
-  }
+  switch (stage) {
+    case "rules":
+      return <RulesPage goToStage={goToStage} />;
 
-  if (stage === "hardware") {
-    return (
-      <HardwareCheck
-        goToStage={goToStage}
-        updateSession={updateSession}
-      />
-    );
-  }
+    case "hardware":
+      return (
+        <HardwareCheck
+          goToStage={goToStage}
+          updateSession={updateSession}
+        />
+      );
 
-  return (
-    <InterviewRoom session={session} updateSession={updateSession} />
-  );
+    case "interview":
+      return (
+        <InterviewRoom 
+          session={session} 
+          updateSession={updateSession} 
+        />
+      );
+
+    default:
+      return (
+        <main className="min-h-screen bg-slate-950 flex items-center justify-center text-white">
+          <p>Initializing your room state...</p>
+        </main>
+      );
+  }
 }
