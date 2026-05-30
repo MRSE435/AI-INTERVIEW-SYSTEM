@@ -24,6 +24,7 @@ export default function InterviewRoom({ session, updateSession }) {
   const [videoUrl, setVideoUrl] = useState("");
   const [cameraBlob, setCameraBlob] = useState(null);
   const [status, setStatus] = useState("Camera not started");
+  const [uploading, setUploading] = useState(false);
 
   const currentQuestion = questions[currentIndex];
 
@@ -54,56 +55,56 @@ export default function InterviewRoom({ session, updateSession }) {
     }
   }
 
-function speakQuestion() {
-  if (!currentQuestion) return;
+  function speakQuestion() {
+    if (!currentQuestion) return;
 
-  if (!window.speechSynthesis) {
-    alert("Text-to-speech is not supported in this browser.");
-    return;
-  }
+    if (!window.speechSynthesis) {
+      alert("Text-to-speech is not supported in this browser.");
+      return;
+    }
 
-  window.speechSynthesis.cancel();
+    window.speechSynthesis.cancel();
 
-  const utterance = new SpeechSynthesisUtterance(currentQuestion);
+    const utterance = new SpeechSynthesisUtterance(currentQuestion);
 
-  utterance.lang = "en-US";
-  utterance.rate = 0.9;
-  utterance.pitch = 1;
-  utterance.volume = 1;
+    utterance.lang = "en-US";
+    utterance.rate = 0.9;
+    utterance.pitch = 1;
+    utterance.volume = 1;
 
-  utterance.onstart = () => {
-    setStatus("AI interviewer is speaking...");
-  };
+    utterance.onstart = () => {
+      setStatus("AI interviewer is speaking...");
+    };
 
-  utterance.onend = () => {
-    setStatus("Question spoken. Start your answer.");
-  };
+    utterance.onend = () => {
+      setStatus("Question spoken. Start your answer.");
+    };
 
-  utterance.onerror = (error) => {
-    console.log("Speech error:", error);
-    setStatus("Speech failed. Please read the question manually.");
-  };
+    utterance.onerror = (error) => {
+      console.log("Speech error:", error);
+      setStatus("Speech failed. Please read the question manually.");
+    };
 
-  const voices = window.speechSynthesis.getVoices();
+    const voices = window.speechSynthesis.getVoices();
 
-  if (voices.length > 0) {
-    const englishVoice =
-      voices.find((voice) => voice.lang.includes("en")) || voices[0];
-
-    utterance.voice = englishVoice;
-    window.speechSynthesis.speak(utterance);
-  } else {
-    window.speechSynthesis.onvoiceschanged = () => {
-      const loadedVoices = window.speechSynthesis.getVoices();
+    if (voices.length > 0) {
       const englishVoice =
-        loadedVoices.find((voice) => voice.lang.includes("en")) ||
-        loadedVoices[0];
+        voices.find((voice) => voice.lang.includes("en")) || voices[0];
 
       utterance.voice = englishVoice;
       window.speechSynthesis.speak(utterance);
-    };
+    } else {
+      window.speechSynthesis.onvoiceschanged = () => {
+        const loadedVoices = window.speechSynthesis.getVoices();
+        const englishVoice =
+          loadedVoices.find((voice) => voice.lang.includes("en")) ||
+          loadedVoices[0];
+
+        utterance.voice = englishVoice;
+        window.speechSynthesis.speak(utterance);
+      };
+    }
   }
-}
 
   function startRecording() {
     if (!stream) {
@@ -167,54 +168,71 @@ function speakQuestion() {
     }
   }
 
-  function saveAnswerAndNext() {
+  async function uploadAnswerAndNext() {
     if (!cameraBlob) {
       alert("Record answer first");
       return;
     }
 
-    const newResponse = {
-      questionIndex: currentIndex,
-      question: currentQuestion,
-      videoPreviewUrl: videoUrl,
-      evaluationStatus: "pending",
-      transcript: "",
-      recordedAt: new Date().toISOString(),
-    };
+    try {
+      setUploading(true);
+      setStatus("Uploading answer...");
 
-    const previousAnswers = session?.answers || [];
-    const updatedAnswers = [...previousAnswers, newResponse];
+      const formData = new FormData();
 
-    const nextIndex = currentIndex + 1;
+      formData.append("video", cameraBlob, `question-${currentIndex}.webm`);
+      formData.append("interviewToken", session.interviewToken);
+      formData.append("sessionId", session.sessionId);
+      formData.append("questionIndex", currentIndex);
+      formData.append("question", currentQuestion);
 
-    updateSession({
-      answers: updatedAnswers,
-      currentQuestionIndex: nextIndex,
-      status: nextIndex >= questions.length ? "completed" : "in_progress",
-    });
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_BACKEND_URL}/upload-camera`,
+        {
+          method: "POST",
+          body: formData,
+        }
+      );
 
-    setCurrentIndex(nextIndex);
-    setVideoUrl("");
-    setCameraBlob(null);
-    setStatus("Ready for next question");
-  }
+      const data = await res.json();
 
-  if (currentIndex >= questions.length) {
-    return (
-      <main className="min-h-screen bg-slate-950 text-white p-6">
-        <div className="max-w-4xl mx-auto bg-slate-900 border border-slate-700 rounded-2xl p-6 space-y-4">
-          <h1 className="text-3xl font-bold">Interview Completed</h1>
-          <p className="text-slate-300">
-            Your responses have been recorded. The recruiter can review your
-            videos and evaluation later.
-          </p>
+      if (!data.success) {
+        setStatus("Upload failed");
+        alert(data.message || "Upload failed");
+        return;
+      }
 
-          <p className="text-slate-400">
-            Session ID: {session?.sessionId}
-          </p>
-        </div>
-      </main>
-    );
+      const newResponse = {
+        questionIndex: currentIndex,
+        question: currentQuestion,
+        cameraVideoUrl: data.videoUrl,
+        uploadStatus: "uploaded",
+        transcriptStatus: "pending",
+        evaluationStatus: "pending",
+        uploadedAt: new Date().toISOString(),
+      };
+
+      const updatedAnswers = [...(session?.answers || []), newResponse];
+
+      const nextIndex = currentIndex + 1;
+
+      updateSession({
+        answers: updatedAnswers,
+        currentQuestionIndex: nextIndex,
+        status: nextIndex >= questions.length ? "completed" : "in_progress",
+      });
+
+      setCurrentIndex(nextIndex);
+      setVideoUrl("");
+      setCameraBlob(null);
+      setStatus("Answer uploaded. Ready for next question.");
+    } catch (error) {
+      console.log(error);
+      setStatus("Upload error");
+      alert("Something went wrong while uploading.");
+    } finally {
+      setUploading(false);
+    }
   }
 
   return (
@@ -296,10 +314,11 @@ function speakQuestion() {
             />
 
             <button
-              onClick={saveAnswerAndNext}
-              className="bg-orange-600 px-5 py-3 rounded font-semibold"
+              onClick={uploadAnswerAndNext}
+              disabled={uploading}
+              className="bg-orange-600 px-5 py-3 rounded font-semibold disabled:opacity-50"
             >
-              Save Answer & Next Question
+              {uploading ? "Uploading..." : "Upload Answer & Next Question"}
             </button>
           </div>
         )}
