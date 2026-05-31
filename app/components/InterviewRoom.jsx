@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState, useEffect } from "react";
-
+import { useRouter } from "next/navigation";
 const questions = [
   "Tell me about yourself.",
   "Describe one full-stack project you have built.",
@@ -14,7 +14,7 @@ export default function InterviewRoom({ session, updateSession }) {
   const liveVideoRef = useRef(null);
   const cameraRecorderRef = useRef(null);
   const cameraChunksRef = useRef([]);
-  
+  const router = useRouter();
   // Core hardware stream handles managed entirely inside this component
   const screenRecorderRef = useRef(null);
   const screenChunksRef = useRef([]);
@@ -28,23 +28,52 @@ export default function InterviewRoom({ session, updateSession }) {
   const [cameraBlob, setCameraBlob] = useState(null);
   const [status, setStatus] = useState("Initializing Room...");
   const [uploading, setUploading] = useState(false);
+  const [tokenAllowed, setTokenAllowed] = useState(null);
+const [tokenMessage, setTokenMessage] = useState("");
 
   // Core multi-phase layout flags
   const [isFinishing, setIsFinishing] = useState(false);
   const [isFullySubmitted, setIsFullySubmitted] = useState(false);
 
   // 🏁 Trigger screen share permission exactly when this component mounts
-  useEffect(() => {
-    if (!isScreenPromptActive.current) {
-      isScreenPromptActive.current = true;
-      initiateScreenCapturePipeline();
+useEffect(() => {
+  if (tokenAllowed !== true) return;
+
+  if (!isScreenPromptActive.current) {
+    isScreenPromptActive.current = true;
+    initiateScreenCapturePipeline();
+  }
+
+  return () => {
+    killAllHardwareTracks();
+  };
+}, [tokenAllowed]);
+useEffect(() => {
+  async function verifyInterviewToken() {
+    try {
+    const backendUrl =
+  process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5000";
+
+const res = await fetch(
+  `${backendUrl}/verify-token/${session.interviewToken}`
+);
+const data = await res.json();
+
+
+      if (!data.allowed) {
+        router.replace("/");
+        return;
+      }
+
+      setTokenAllowed(true);
+
+    } catch (error) {
+      router.replace("/");
     }
+  }
 
-    return () => {
-      killAllHardwareTracks();
-    };
-  }, []);
-
+  verifyInterviewToken();
+}, []);
   const currentQuestion = questions[currentIndex];
 
   // 🖥️ Initialize Screen Capture directly within the component space
