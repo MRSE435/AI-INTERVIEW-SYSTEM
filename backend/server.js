@@ -65,82 +65,80 @@ app.get("/verify-token/:token", async (req, res) => {
 
 // 🎙️ DEEPGRAM TRANSCRIPTION GATEWAY
 async function transcribeWithDeepgram(filePath) {
-  const fileBuffer = await fs.promises.readFile(filePath);
-
-  const response = await fetch(
-    "https://api.deepgram.com/v1/listen?model=nova-2&smart_format=true",
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Token ${process.env.DEEPGRAM_API_KEY}`,
-        "Content-Type": "video/webm",
-      },
-      body: fileBuffer,
-    }
-  );
-
-  const data = await response.json();
-  return data.results?.channels?.[0]?.alternatives?.[0]?.transcript || "";
-}
-
-// 🤖 GEMINI NATIVE STRUCTURED EVALUATION ENGINE
-async function evaluateWithGemini(question, transcript) {
-  const prompt = `You are an expert AI technical interview evaluator. Analyze the candidate's transcript for accuracy and clarity based on the original question. Question: "${question}". Transcript: "${transcript}".`;
-
-  // Explicitly command Gemini to output using JSON Schema
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: "OBJECT",
-            properties: {
-              score: { type: "INTEGER" },
-              communication: { type: "INTEGER" },
-              technicalRelevance: { type: "INTEGER" },
-              strengths: { type: "ARRAY", items: { type: "STRING" } },
-              weaknesses: { type: "ARRAY", items: { type: "STRING" } },
-              feedback: { type: "STRING" }
-            },
-            required: ["score", "communication", "technicalRelevance", "strengths", "weaknesses", "feedback"]
-          }
-        }
-      }),
-    }
-  );
-
-  const data = await response.json();
-  const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
-
   try {
-    return JSON.parse(rawText); // Guaranteed clean JSON directly from Gemini's engine
+    const fileBuffer = await fs.promises.readFile(filePath);
+    const response = await fetch(
+      "https://api.deepgram.com/v1/listen?model=nova-2&smart_format=true",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Token ${process.env.DEEPGRAM_API_KEY}`,
+        },
+        body: fileBuffer,
+      }
+    );
+
+    const data = await response.json();
+    return data.results?.channels?.[0]?.alternatives?.[0]?.transcript || "";
   } catch (error) {
-    console.error("[NATIVE PARSE FAIL] Falling back to default block", error);
-    return {
-      score: 0,
-      communication: 0,
-      technicalRelevance: 0,
-      strengths: [],
-      weaknesses: ["System evaluation generation validation error"],
-      feedback: "Failed to cleanly parse AI processing structure.",
-    };
+    console.error("[DEEPGRAM CRITICAL ERROR]", error.message);
+    return "";
   }
 }
 
-// 🎥 1. STANDARD CAMERA VIDEO SEGMENT UPLOAD (SECURED & BACKGROUND THREADED)
+// 🤖 GEMINI NATIVE STRUCTURED EVALUATION ENGINE (Using your exact working curl text logic)
+async function evaluateWithGemini(question, transcript) {
+  const cleanPrompt = `You are an expert AI technical interview evaluator. Analyze the candidate transcript for accuracy and clarity. Question: "${question}". Transcript: "${transcript}". Respond with a RAW JSON object matching this exact schema layout. Do NOT wrap your output inside markdown text code blocks (no backticks). Output raw parsable string text only: {\"score\": 8, \"communication\": 9, \"technicalRelevance\": 7, \"strengths\": [], \"weaknesses\": [], \"feedback\": \"\"}`;
+  
+  console.log(`[GEMINI ENGINE] Firing fetch payload to gemini-2.5-flash...`);
+
+  try {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: cleanPrompt }] }]
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`Gemini API returned status ${response.status}: ${errText}`);
+    }
+
+    const data = await response.json();
+    let rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
+    
+    // Safety wash: Strip out backticks if the model ignores the prompt layout rules
+    rawText = rawText.replace(/```json/g, "").replace(/```/g, "").trim();
+    
+    return rawText; 
+  } catch (error) {
+    console.error(`[GEMINI CRITICAL FAILURE] Execution dropped:`, error.message);
+    return JSON.stringify({
+      score: 0,
+      communication: 0,
+      technicalRelevance: 0,
+      strengths: ["Pipeline connection tracking failed"],
+      weaknesses: [error.message],
+      feedback: "Failed to cleanly receive text payload stream from API gateway."
+    });
+  }
+}
+
+// 🎥 1. STANDARD CAMERA VIDEO SEGMENT UPLOAD
 app.post("/upload-camera", upload.single("video"), async (req, res) => {
   let tempFilePath;
 
   try {
     const file = req.file;
     const { interviewToken, sessionId, questionIndex, question } = req.body;
+    const targetedIdx = parseInt(questionIndex) || 0;
 
     console.log("--- [CAMERA UPLOAD INCOMING] ---");
 
@@ -159,10 +157,9 @@ app.post("/upload-camera", upload.single("video"), async (req, res) => {
     }
 
     tempFilePath = file.path;
-    const key = `interviews/${interviewToken}/camera/question-${questionIndex}.webm`;
+    const key = `interviews/${interviewToken}/camera/question-${targetedIdx}.webm`;
     const fileBuffer = await fs.promises.readFile(tempFilePath);
 
-    // Step 1: Secure Cloudflare asset store instantly
     await r2.send(
       new PutObjectCommand({
         Bucket: process.env.R2_BUCKET_NAME,
@@ -174,67 +171,77 @@ app.post("/upload-camera", upload.single("video"), async (req, res) => {
 
     const videoUrl = `${process.env.R2_PUBLIC_URL}/${key}`;
 
-    // Step 2: Push initial document block into database so frontend gets an immediate 200 OK success
     const updatedDocument = await Interview.findOneAndUpdate(
-      { interviewToken, status: { $ne: "completed" } },
+      { interviewToken },
       {
         $setOnInsert: { interviewToken, sessionId, status: "in_progress" },
         $push: {
           answers: {
-            questionIndex: parseInt(questionIndex) || 0,
+            questionIndex: targetedIdx,
             question,
             cameraVideoUrl: videoUrl,
             uploadStatus: "uploaded",
             uploadedAt: new Date(),
-            evaluationStatus: "pending", // Starts as pending inside database
+            evaluationStatus: "pending",
+            evaluation: null,
+            transcript: ""
           },
         },
       },
       { upsert: true, returnDocument: "after" }
     );
 
-    // Step 3: Run AI evaluation asynchronously in the background.
-    // Detaching this code block stops frontend timeout drops!
+    const savedAnswer = updatedDocument.answers[updatedDocument.answers.length - 1];
+    const savedAnswerId = savedAnswer._id; 
+
+    // Run AI evaluation asynchronously in the background thread
     (async () => {
+      const taskFilePath = tempFilePath;
       try {
-        console.log(`[BACKGROUND PIPELINE START] Token: ${interviewToken}, Index: ${questionIndex}`);
-        const transcript = await transcribeWithDeepgram(tempFilePath);
+        console.log(`[BACKGROUND PIPELINE START] Token: ${interviewToken}, Target Answer ID: ${savedAnswerId}`);
+        const transcript = await transcribeWithDeepgram(taskFilePath);
+        console.log(`[BACKGROUND TRANSCRIPTION SUCCESS] Transcript captured: "${transcript}"`);
         
-        let evaluation = null;
-        let finalStatus = "failed";
+        if (transcript && transcript.trim().length > 2) {
+          
+          // Execute Gemini evaluation call
+          const rawGeminiResponse = await evaluateWithGemini(question, transcript);
+          
+          // 🚨 UNBLOCKABLE TERMINAL PRINT BLOCK 🚨
+          console.log("\n======================================================================");
+          console.log("🔥 LIVE GEMINI RESPONSE RECEIVED FROM API GATEWAY:");
+          console.log(rawGeminiResponse);
+          console.log("======================================================================\n");
 
-        if (transcript) {
-          evaluation = await evaluateWithGemini(question, transcript);
-          finalStatus = "completed";
-        }
+          // Convert clean string to actual javascript object structure for MongoDB database save mapping
+          const parsedEvaluationObject = JSON.parse(rawGeminiResponse);
 
-        // Target the specific entry nested in your array using positional matching operators
-        await Interview.updateOne(
-          { interviewToken, "answers.questionIndex": parseInt(questionIndex) },
-          {
-            $set: {
-              "answers.$.transcript": transcript,
-              "answers.$.evaluation": evaluation,
-              "answers.$.evaluationStatus": finalStatus,
-            },
+          // Locate document state directly and commit values securely
+          const liveDoc = await Interview.findOne({ interviewToken });
+          if (liveDoc) {
+            const targetAnswerSubdoc = liveDoc.answers.id(savedAnswerId);
+            if (targetAnswerSubdoc) {
+              targetAnswerSubdoc.transcript = transcript;
+              targetAnswerSubdoc.evaluation = parsedEvaluationObject;
+              targetAnswerSubdoc.evaluationStatus = "completed";
+              
+              liveDoc.markModified("answers");
+              await liveDoc.save();
+              console.log(`[DATABASE SUCCESS] Clean state locked to Atlas subdoc: ${savedAnswerId}`);
+            }
           }
-        );
-        console.log(`[BACKGROUND PIPELINE SUCCESS] Aggregated updates pushed to Atlas for entry index ${questionIndex}`);
+        } else {
+          console.log("[BACKGROUND LOG] Transcript was empty. Skipping Gemini execution loop entirely.");
+        }
       } catch (bgError) {
         console.error("[BACKGROUND TRACK PROCESSING ERROR]", bgError);
-        await Interview.updateOne(
-          { interviewToken, "answers.questionIndex": parseInt(questionIndex) },
-          { $set: { "answers.$.evaluationStatus": "failed" } }
-        );
       } finally {
-        // Safe local workspace node file erasure when the background thread completes execution
-        if (fs.existsSync(tempFilePath)) {
-          await fs.promises.unlink(tempFilePath).catch(() => {});
+        if (fs.existsSync(taskFilePath)) {
+          await fs.promises.unlink(taskFilePath).catch(() => {});
         }
       }
     })();
 
-    // Instantly answer back to browser client layout context
     return res.json({
       success: true,
       message: "Camera segment uploaded successfully. AI analysis running in background.",
@@ -250,7 +257,7 @@ app.post("/upload-camera", upload.single("video"), async (req, res) => {
   }
 });
 
-// 🖥️ 2. CONCURRENT SCREEN STREAM AGGREGATION FILE UPLOAD (SECURED)
+// 🖥️ 2. CONCURRENT SCREEN STREAM AGGREGATION FILE UPLOAD
 app.post("/upload-screen", upload.single("screen"), async (req, res) => {
   let tempFilePath;
 
@@ -264,12 +271,6 @@ app.post("/upload-screen", upload.single("screen"), async (req, res) => {
       return res.status(400).json({ success: false, message: "Missing metadata identifier: interviewToken" });
     }
 
-    const existingInterview = await Interview.findOne({ interviewToken });
-    if (existingInterview && existingInterview.status === "completed") {
-      if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
-      return res.status(403).json({ success: false, message: "Access Denied: Interview is closed." });
-    }
-
     tempFilePath = file.path;
     const key = `interviews/${interviewToken}/screen/full-screen.webm`;
     const fileBuffer = await fs.promises.readFile(tempFilePath);
@@ -280,8 +281,8 @@ app.post("/upload-screen", upload.single("screen"), async (req, res) => {
 
     const screenVideoUrl = `${process.env.R2_PUBLIC_URL}/${key}`;
 
-    await Interview.findOneAndUpdate(
-      { interviewToken, status: { $ne: "completed" } },
+    await Interview.updateOne(
+      { interviewToken },
       {
         $set: {
           sessionId,
@@ -289,9 +290,10 @@ app.post("/upload-screen", upload.single("screen"), async (req, res) => {
           screenUploadStatus: "uploaded",
           status: "completed",
         },
-      },
-      { upsert: false }
+      }
     );
+
+    console.log(`[SCREEN UPLOAD SUCCESS] Saved URL to token: ${interviewToken}`);
 
     if (fs.existsSync(tempFilePath)) {
       await fs.promises.unlink(tempFilePath);
