@@ -8,7 +8,8 @@ export default function AdminDashboard() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
 
-  const BACKEND_URL = "https://blades-bedding-broker-anyway.trycloudflare.com"; // Update with your actual server port/IP
+ const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL;
+ // Update with your actual server port/IP
 
   // Fetch all interviews on page load
   // Fetch all interviews on page load
