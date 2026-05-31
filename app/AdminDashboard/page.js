@@ -222,19 +222,35 @@ export default function AdminDashboard() {
               <p>
                 <b>Candidate:</b> {selectedInterview.candidateEmail}
               </p>
+
               <p>
                 <b>Status:</b> {selectedInterview.status || "scheduled"}
               </p>
+
               <p>
                 <b>Average Score:</b>{" "}
                 {calculateAverageScore(selectedInterview.answers)}
               </p>
+
               <p>
                 <b>System Status:</b>{" "}
                 {selectedInterview.hasSystemErrors
-                  ? selectedInterview.systemErrorLog || "API Limit / Schema Failure"
+                  ? selectedInterview.systemErrorLog
                   : "Clear"}
               </p>
+
+              {selectedInterview.screenRecordingUrl && (
+                <div style={{ marginTop: "12px" }}>
+                  <a
+                    href={selectedInterview.screenRecordingUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={styles.mediaButton}
+                  >
+                    View Full Screen Recording
+                  </a>
+                </div>
+              )}
             </div>
 
             <h4 style={styles.sectionHeading}>Recorded Answers</h4>
@@ -315,6 +331,7 @@ export default function AdminDashboard() {
                       <p style={styles.noMediaText}>No media artifacts found.</p>
                     )}
                 </div>
+
               ))
             ) : (
               <p style={{ color: "#94A3B8" }}>No answer recordings found.</p>
