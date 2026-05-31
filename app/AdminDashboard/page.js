@@ -1,3 +1,4 @@
+"use client"
 import React, { useState, useEffect } from "react";
 
 export default function AdminDashboard() {
@@ -7,20 +8,22 @@ export default function AdminDashboard() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
 
-  const BACKEND_URL = "http://localhost:5000"; // Update with your actual server port/IP
+  const BACKEND_URL = "https://blades-bedding-broker-anyway.trycloudflare.com"; // Update with your actual server port/IP
 
   // Fetch all interviews on page load
-  const fetchInterviews = async () => {
-    try {
-      const res = await fetch(`${BACKEND_URL}/admin/dashboard-interviews`);
-      const data = await res.json();
-      if (data.success) {
-        setInterviews(data.interviews);
-      }
-    } catch (err) {
-      console.error("Error fetching dashboard data:", err);
+  // Fetch all interviews on page load
+const fetchInterviews = async () => {
+  try {
+    // FIX: Added backticks for template literal
+    const res = await fetch(`${BACKEND_URL}/admin/dashboard-interviews`);
+    const data = await res.json();
+    if (data.success) {
+      setInterviews(data.interviews);
     }
-  };
+  } catch (err) {
+    console.error("Error fetching dashboard data:", err);
+  }
+};
 
   useEffect(() => {
     fetchInterviews();

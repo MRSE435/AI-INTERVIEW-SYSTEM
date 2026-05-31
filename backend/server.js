@@ -3,6 +3,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import multer from "multer";
 import fs from "fs";
+import { randomBytes } from "crypto";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import mongoose from "mongoose";
 import Interview from "./models/Interview.js";
@@ -203,33 +204,67 @@ app.post("/upload-camera", upload.single("video"), async (req, res) => {
         console.log(`[BACKGROUND TRANSCRIPTION SUCCESS] Transcript captured: "${transcript}"`);
         
         if (transcript && transcript.trim().length > 2) {
-          
-          // Execute Gemini evaluation call
-          const rawGeminiResponse = await evaluateWithGemini(question, transcript);
-          
-          // 🚨 UNBLOCKABLE TERMINAL PRINT BLOCK 🚨
-          console.log("\n======================================================================");
-          console.log("🔥 LIVE GEMINI RESPONSE RECEIVED FROM API GATEWAY:");
-          console.log(rawGeminiResponse);
-          console.log("======================================================================\n");
+          let parsedEvaluationObject = null;
+          let evaluationStatus = "completed";
 
-          // Convert clean string to actual javascript object structure for MongoDB database save mapping
-          const parsedEvaluationObject = JSON.parse(rawGeminiResponse);
+          try {
+            // Execute Gemini evaluation call
+            const rawGeminiResponse = await evaluateWithGemini(question, transcript);
+            
+            // 🚨 UNBLOCKABLE TERMINAL PRINT BLOCK 🚨
+            console.log("\n======================================================================");
+            console.log("🔥 LIVE GEMINI RESPONSE RECEIVED FROM API GATEWAY:");
+            console.log(rawGeminiResponse);
+            console.log("======================================================================\n");
 
-          // Locate document state directly and commit values securely
-          const liveDoc = await Interview.findOne({ interviewToken });
-          if (liveDoc) {
-            const targetAnswerSubdoc = liveDoc.answers.id(savedAnswerId);
-            if (targetAnswerSubdoc) {
-              targetAnswerSubdoc.transcript = transcript;
-              targetAnswerSubdoc.evaluation = parsedEvaluationObject;
-              targetAnswerSubdoc.evaluationStatus = "completed";
+            parsedEvaluationObject = JSON.parse(rawGeminiResponse);
+
+            // Handle and catch hardcoded tracking failures if API down or dropped
+            if (parsedEvaluationObject.score === 0 && parsedEvaluationObject.strengths.includes("Pipeline connection tracking failed")) {
+              evaluationStatus = "failed";
               
-              liveDoc.markModified("answers");
-              await liveDoc.save();
-              console.log(`[DATABASE SUCCESS] Clean state locked to Atlas subdoc: ${savedAnswerId}`);
+              await Interview.updateOne(
+                { interviewToken },
+                { 
+                  $set: { 
+                    hasSystemErrors: true, 
+                    systemErrorLog: `Gemini API Call Failed: ${parsedEvaluationObject.weaknesses[0]}` 
+                  } 
+                }
+              );
             }
+
+          } catch (jsonErr) {
+            console.error("[PARSING ERROR] Gemini payload evaluation crashed or limit exhausted:", jsonErr.message);
+            evaluationStatus = "failed";
+            
+            // Flag error immediately on the document instance for the Admin Dashboard feed
+            await Interview.updateOne(
+              { interviewToken },
+              { 
+                $set: { 
+                  hasSystemErrors: true, 
+                  systemErrorLog: "Gemini API Quota Exhausted or Malformed JSON structure returned." 
+                } 
+              }
+            );
           }
+
+          // ✨ FIXED: Bulletproof atomic update targeting exact sub-document array node directly
+          await Interview.updateOne(
+            { 
+              interviewToken, 
+              "answers._id": savedAnswerId 
+            },
+            {
+              $set: {
+                "answers.$.transcript": transcript,
+                "answers.$.evaluation": parsedEvaluationObject,
+                "answers.$.evaluationStatus": evaluationStatus
+              }
+            }
+          );
+          console.log(`[DATABASE SUCCESS] Array node ${savedAnswerId} written atomically.`);
         } else {
           console.log("[BACKGROUND LOG] Transcript was empty. Skipping Gemini execution loop entirely.");
         }
@@ -306,6 +341,60 @@ app.post("/upload-screen", upload.single("screen"), async (req, res) => {
       try { await fs.promises.unlink(tempFilePath); } catch (e) {}
     }
     return res.status(500).json({ success: false, message: "Internal server error during storage" });
+  }
+});
+
+// 🎫 3. ADMIN ENDPOINT: GENERATE SECURE INTERVIEW LINKS
+app.post("/admin/schedule-interview", async (req, res) => {
+  try {
+    const { candidateEmail } = req.body;
+
+    if (!candidateEmail) {
+      return res.status(400).json({ success: false, message: "Candidate email is strictly required." });
+    }
+
+    const generatedToken = randomBytes(5).toString("hex").toUpperCase();
+    
+    // BACKEND NOW USES YOUR ENV DOMAIN
+    const frontendBaseUrl = process.env.FRONTEND_URL || "https://ai-interview-system-two.vercel.app";
+    const meetingLink = `${frontendBaseUrl}/interview/${generatedToken}`;
+
+    const newSession = await Interview.create({
+      interviewToken: generatedToken,
+      candidateEmail,
+      status: "scheduled",
+      answers: [],
+      hasSystemErrors: false,
+      systemErrorLog: ""
+    });
+
+    return res.json({
+      success: true,
+      message: "Pipeline token generated and recorded successfully.",
+      interviewToken: generatedToken,
+      meetingLink,
+      data: newSession
+    });
+  } catch (error) {
+    console.error("[CRITICAL ADMIN SESSION SCHEDULER ERROR]", error);
+    return res.status(500).json({ success: false, message: "Failed to allocate cluster resources." });
+  }
+});
+
+// 📊 4. ADMIN ENDPOINT: LIVE DASHBOARD MONITOR FEED
+app.get("/admin/dashboard-interviews", async (req, res) => {
+  try {
+    // Sorts entries showing newly generated candidate links first
+    const dataset = await Interview.find({}).sort({ createdAt: -1 });
+    
+    return res.json({
+      success: true,
+      count: dataset.length,
+      interviews: dataset
+    });
+  } catch (error) {
+    console.error("[CRITICAL GRID METRIC CONSUMPTION ERROR]", error);
+    return res.status(500).json({ success: false, message: "Failed to retrieve data records from Atlas." });
   }
 });
 
