@@ -6,7 +6,7 @@ An AI-powered interview assessment system that enables recruiters to create inte
 
 # Architecture Diagram
 
-> Insert your Excalidraw architecture image here.
+
 
 ![Architecture Diagram](./docs/architecture.png)
 
