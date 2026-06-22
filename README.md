@@ -480,7 +480,29 @@ Recruiter reviews results
 
 ## Deployment
 
-* Vercel (Frontend)
-* Linux VPS (Backend)
-* Cloudflare Tunnel
-* Cloudflare R2
+Backend
+
+Hosted on a Linux VPS with a production-ready deployment setup.
+
+Responsibilities
+Media uploads
+Cloudflare R2 integration
+Deepgram transcription
+Gemini evaluation
+MongoDB operations
+Session processing
+Production Setup
+Custom domain connected to the VPS
+Nginx configured as a reverse proxy
+PM2 used for Node.js process management
+SSL/HTTPS enabled for secure communication
+Automatic application restart configured for server reboot
+Backend served through a domain-based production URL
+Deployment
+Vercel (Frontend)
+Linux VPS (Backend)
+Nginx Reverse Proxy
+PM2 Process Manager
+Custom Domain
+Cloudflare Tunnel
+Cloudflare R2
